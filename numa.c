@@ -27,6 +27,16 @@
 #include "qapi-visit.h"
 #include "qapi/opts-visitor.h"
 #include "qapi/dealloc-visitor.h"
+#include "exec/memory.h"
+
+#ifdef __linux__
+#include <sys/syscall.h>
+#ifndef MPOL_F_RELATIVE_NODES
+#define MPOL_F_RELATIVE_NODES (1 << 14)
+#define MPOL_F_STATIC_NODES   (1 << 15)
+#endif
+#endif
+
 QemuOptsList qemu_numa_opts = {
     .name = "numa",
     .implied_opt_name = "type",
@@ -228,6 +238,75 @@ void set_numa_nodes(void)
     }
 }
 
+#ifdef __linux__
+static int node_parse_bind_mode(unsigned int nodeid)
+{
+    int bind_mode;
+
+    switch (numa_info[nodeid].policy) {
+    case NUMA_NODE_POLICY_DEFAULT:
+    case NUMA_NODE_POLICY_PREFERRED:
+    case NUMA_NODE_POLICY_MEMBIND:
+    case NUMA_NODE_POLICY_INTERLEAVE:
+        bind_mode = numa_info[nodeid].policy;
+        break;
+    default:
+        bind_mode = NUMA_NODE_POLICY_DEFAULT;
+        return bind_mode;
+    }
+
+    bind_mode |= numa_info[nodeid].relative ?
+        MPOL_F_RELATIVE_NODES : MPOL_F_STATIC_NODES;
+
+    return bind_mode;
+}
+#endif
+
+static int set_node_mem_policy(int nodeid)
+{
+#ifdef __linux__
+    void *ram_ptr;
+    RAMBlock *block;
+    ram_addr_t len, ram_offset = 0;
+    int bind_mode;
+    int i;
+
+    QTAILQ_FOREACH(block, &ram_list.blocks, next) {
+        if (!strcmp(block->mr->name, "pc.ram")) {
+            break;
+        }
+    }
+
+    if (block->host == NULL) {
+        return -1;
+    }
+
+    ram_ptr = block->host;
+    for (i = 0; i < nodeid; i++) {
+        len = numa_info[i].node_mem;
+        ram_offset += len;
+    }
+
+    len = numa_info[nodeid].node_mem;
+    bind_mode = node_parse_bind_mode(nodeid);
+    unsigned long *nodes = numa_info[nodeid].host_mem;
+
+    /* This is a workaround for a long standing bug in Linux'
+     * mbind implementation, which cuts off the last specified
+     * node. To stay compatible should this bug be fixed, we
+     * specify one more node and zero this one out.
+     */
+    unsigned long maxnode = find_last_bit(nodes, MAX_NODES);
+    if (syscall(SYS_mbind, ram_ptr + ram_offset, len, bind_mode,
+                nodes, maxnode + 2, 0)) {
+            perror("mbind");
+            return -1;
+    }
+#endif
+
+    return 0;
+}
+
 void set_numa_modes(void)
 {
     CPUState *cpu;
@@ -238,6 +317,13 @@ void set_numa_modes(void)
             if (test_bit(cpu->cpu_index, numa_info[i].node_cpu)) {
                 cpu->numa_node = i;
             }
+        }
+    }
+
+    for (i = 0; i < nb_numa_nodes; i++) {
+        if (set_node_mem_policy(i) == -1) {
+            fprintf(stderr,
+                    "qemu: can not set host memory policy for node%d\n", i);
         }
     }
 }
