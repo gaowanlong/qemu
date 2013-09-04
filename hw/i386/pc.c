@@ -652,14 +652,14 @@ static FWCfgState *bochs_bios_init(void)
         unsigned int apic_id = x86_cpu_apic_id_from_index(i);
         assert(apic_id < apic_id_limit);
         for (j = 0; j < nb_numa_nodes; j++) {
-            if (test_bit(i, node_cpumask[j])) {
+            if (test_bit(i, numa_info[j].node_cpu)) {
                 numa_fw_cfg[apic_id + 1] = cpu_to_le64(j);
                 break;
             }
         }
     }
     for (i = 0; i < nb_numa_nodes; i++) {
-        numa_fw_cfg[apic_id_limit + 1 + i] = cpu_to_le64(node_mem[i]);
+        numa_fw_cfg[apic_id_limit + 1 + i] = cpu_to_le64(numa_info[i].node_mem);
     }
     fw_cfg_add_bytes(fw_cfg, FW_CFG_NUMA, numa_fw_cfg,
                      (1 + apic_id_limit + nb_numa_nodes) *
