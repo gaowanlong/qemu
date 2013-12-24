@@ -16,6 +16,9 @@
 #include "qapi/error.h"
 #include "exec/memory.h"
 #include "qemu/option.h"
+#include "qemu/bitmap.h"
+
+#define MAX_NODES 128
 
 #define TYPE_MEMORY_BACKEND "memory"
 #define MEMORY_BACKEND(obj) \
@@ -46,6 +49,9 @@ struct HostMemoryBackendClass {
  * @size: amount of memory backend provides
  * @id: unique identification string in memdev namespace
  * @mr: MemoryRegion representing host memory belonging to backend
+ * @host_nodes: host nodes bitmap used for memory policy
+ * @policy: host memory policy
+ * @relative: if the host nodes bitmap is relative
  */
 struct HostMemoryBackend {
     /* private */
@@ -55,6 +61,10 @@ struct HostMemoryBackend {
     uint64_t size;
 
     MemoryRegion mr;
+
+    DECLARE_BITMAP(host_nodes, MAX_NODES);
+    HostMemPolicy policy;
+    bool relative;
 };
 
 MemoryRegion *host_memory_backend_get_memory(HostMemoryBackend *backend,
